@@ -1,18 +1,21 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from gradio_client import Client
 from huggingface_hub import login
 import logging
 import os
+import requests
+from pathlib import Path
+import tempfile
 
-# Import conditionnel pour compatibilité anciennes/nouvelles versions
+# Import conditionnel pour compatibilité
 try:
     from huggingface_hub import HfFolder
     HAS_HFFOLDER = True
 except ImportError:
     HAS_HFFOLDER = False
 
-# Import conditionnel de handle_file
 try:
     from gradio_client import handle_file
     HAS_HANDLE_FILE = True
@@ -36,16 +39,24 @@ app.add_middleware(
 # URL du Space
 SPACE_URL = "https://dofbi-galsenai-xtts-v2-wolof-inference.hf.space"
 
-# ⭐ AUTHENTIFICATION HUGGING FACE CRITIQUE
-HF_TOKEN = os.environ.get("HF_TOKEN")
+# ⭐ TOKEN HUGGING FACE DIRECTEMENT DANS LE CODE
+# Remplace par ton token (commence par hf_)
+HF_TOKEN = "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"  # ← METS TON TOKEN ICI
+
+# Fallback vers variable d'environnement si le token n'est pas défini
+if HF_TOKEN == "TON_TOKEN_ICI":
+    HF_TOKEN = os.environ.get("HF_TOKEN")
+    if HF_TOKEN:
+        logger.info("🔑 Token chargé depuis variable d'environnement")
+else:
+    logger.info("🔑 Token chargé depuis le code")
+
 AUTH_SUCCESS = False
 
 if HF_TOKEN:
     try:
-        # Authentification explicite
         login(token=HF_TOKEN, add_to_git_credential=False)
         
-        # Vérification selon la version disponible
         if HAS_HFFOLDER:
             saved_token = HfFolder.get_token()
             if saved_token:
@@ -55,7 +66,6 @@ if HF_TOKEN:
             else:
                 logger.error("❌ Token non enregistré malgré login()")
         else:
-            # Pour les nouvelles versions, on fait confiance à login()
             logger.info("✅ Authentification Hugging Face réussie !")
             logger.info(f"🔐 Token configuré (longueur: {len(HF_TOKEN)})")
             AUTH_SUCCESS = True
@@ -66,7 +76,6 @@ if HF_TOKEN:
 else:
     logger.warning("⚠️ Aucun token HF fourni - quota GPU limité")
 
-# Affichage des infos au démarrage
 logger.info("=" * 60)
 logger.info("🚀 DÉMARRAGE DU WRAPPER XTTS WOLOF")
 logger.info("=" * 60)
@@ -79,6 +88,34 @@ if not AUTH_SUCCESS:
 logger.info("=" * 60)
 logger.info(f"📚 Documentation : http://localhost:{os.environ.get('PORT', 8000)}/docs")
 logger.info("=" * 60)
+
+def download_audio_from_hf(audio_url: str, token: str = None) -> bytes:
+    """
+    Télécharge l'audio depuis Hugging Face Space
+    
+    Args:
+        audio_url: URL de l'audio sur HF Space
+        token: Token HF pour l'authentification
+    
+    Returns:
+        bytes: Contenu de l'audio en bytes
+    """
+    try:
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        
+        logger.info(f"📥 Téléchargement de l'audio depuis : {audio_url}")
+        
+        response = requests.get(audio_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        logger.info(f"✅ Audio téléchargé ({len(response.content)} bytes)")
+        return response.content
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du téléchargement : {e}")
+        raise
 
 @app.get("/")
 def root():
@@ -95,7 +132,8 @@ def root():
             "GET /": "Informations sur l'API",
             "GET /health": "Vérifie que l'API fonctionne",
             "GET /test-space": "Teste la connexion au Space HF",
-            "POST /synthesize": "Génère de l'audio à partir de texte"
+            "POST /synthesize": "Génère de l'audio à partir de texte (retourne l'URL)",
+            "POST /synthesize-download": "Génère de l'audio et le retourne directement"
         },
         "documentation": "/docs"
     }
@@ -117,7 +155,6 @@ def test_space_connection():
         logger.info(f"🔄 Test de connexion à {SPACE_URL}")
         logger.info(f"🔐 Authentifié : {AUTH_SUCCESS}")
         
-        # ⭐ CRÉATION DU CLIENT (le token vient de HfFolder après login())
         client = Client(SPACE_URL)
         if AUTH_SUCCESS:
             logger.info("✅ Client créé - token HF actif via login()")
@@ -144,6 +181,7 @@ def test_space_connection():
 def synthesize_speech(text: str, audio_reference_url: str = None):
     """
     Génère de l'audio à partir de texte en wolof
+    Retourne l'URL de l'audio sur HF Space
     
     Args:
         text: Texte en wolof à synthétiser
@@ -157,14 +195,12 @@ def synthesize_speech(text: str, audio_reference_url: str = None):
         logger.info(f"🎤 Audio de référence : {audio_reference_url}")
         logger.info(f"🔐 Authentifié : {AUTH_SUCCESS}")
         
-        # ⭐ CRÉATION DU CLIENT (le token est déjà actif via login())
         client = Client(SPACE_URL)
         if AUTH_SUCCESS:
             logger.info("✅ Client Gradio créé - token HF actif")
         else:
             logger.warning("⚠️ Client créé sans token - quota GPU limité")
         
-        # Appel avec ou sans handle_file selon la version
         if HAS_HANDLE_FILE:
             logger.info("📦 Utilisation de handle_file (gradio-client 2.0+)")
             result = client.predict(
@@ -201,6 +237,7 @@ def synthesize_speech(text: str, audio_reference_url: str = None):
         return {
             "status": "success",
             "audio_url": audio_url,
+            "download_url": f"/download?url={audio_url}",
             "text": text,
             "audio_reference": audio_reference_url,
             "authenticated": AUTH_SUCCESS
@@ -210,7 +247,6 @@ def synthesize_speech(text: str, audio_reference_url: str = None):
         error_msg = str(e)
         logger.error(f"❌ Erreur lors de la synthèse : {error_msg}")
         
-        # Gestion des erreurs spécifiques
         if "GPU quota" in error_msg or "exceeded" in error_msg:
             raise HTTPException(
                 status_code=429,
@@ -223,6 +259,77 @@ def synthesize_speech(text: str, audio_reference_url: str = None):
             )
         
         raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/synthesize-download")
+def synthesize_speech_download(text: str, audio_reference_url: str = None):
+    """
+    Génère de l'audio à partir de texte en wolof
+    Télécharge et retourne directement le fichier audio
+    
+    Args:
+        text: Texte en wolof à synthétiser
+        audio_reference_url: URL de l'audio de référence pour le clonage de voix
+    
+    Returns:
+        Fichier audio WAV directement téléchargeable
+    """
+    try:
+        # Génère l'audio (utilise la fonction synthesize_speech)
+        result = synthesize_speech(text, audio_reference_url)
+        audio_url = result["audio_url"]
+        
+        # Télécharge l'audio depuis HF Space
+        audio_content = download_audio_from_hf(audio_url, HF_TOKEN)
+        
+        # Retourne l'audio comme fichier téléchargeable
+        return StreamingResponse(
+            iter([audio_content]),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f"attachment; filename=audio_{text[:20]}.wav"
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Erreur : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/download")
+def download_audio(url: str):
+    """
+    Télécharge un fichier audio depuis une URL HF Space
+    
+    Args:
+        url: URL complète du fichier audio sur HF Space
+    
+    Returns:
+        Fichier audio directement téléchargeable
+    """
+    try:
+        logger.info(f"📥 Demande de téléchargement : {url}")
+        
+        # Vérifie que l'URL est valide
+        if not url.startswith(SPACE_URL):
+            raise HTTPException(
+                status_code=400,
+                detail="URL invalide - doit provenir du Space HF"
+            )
+        
+        # Télécharge l'audio
+        audio_content = download_audio_from_hf(url, HF_TOKEN)
+        
+        # Retourne l'audio
+        return StreamingResponse(
+            iter([audio_content]),
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": "attachment; filename=audio.wav"
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Erreur de téléchargement : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
