@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SPACE_URL = "dofbi/galsenai-xtts-v2-wolof-inference"
+SPACE_URL = "https://dofbi-galsenai-xtts-v2-wolof-inference.hf.space"
 
 # Définir le token HF comme variable d'environnement
 # Gradio Client le lira automatiquement
