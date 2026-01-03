@@ -41,7 +41,7 @@ SPACE_URL = "https://dofbi-galsenai-xtts-v2-wolof-inference.hf.space"
 
 # ⭐ TOKEN HUGGING FACE DIRECTEMENT DANS LE CODE
 # Remplace par ton token (commence par hf_)
-HF_TOKEN = "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"  # ← METS TON TOKEN ICI
+HF_TOKEN = "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"  # ← METS TON TOKEN ICI
 
 # Fallback vers variable d'environnement si le token n'est pas défini
 if HF_TOKEN == "TON_TOKEN_ICI":
