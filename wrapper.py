@@ -1,9 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from gradio_client import Client
-from huggingface_hub import login, HfFolder
+from huggingface_hub import login
 import logging
 import os
+
+# Import conditionnel pour compatibilité anciennes/nouvelles versions
+try:
+    from huggingface_hub import HfFolder
+    HAS_HFFOLDER = True
+except ImportError:
+    HAS_HFFOLDER = False
 
 # Import conditionnel de handle_file
 try:
@@ -38,14 +45,20 @@ if HF_TOKEN:
         # Authentification explicite
         login(token=HF_TOKEN, add_to_git_credential=False)
         
-        # Vérification que le token est stocké
-        saved_token = HfFolder.get_token()
-        if saved_token:
-            logger.info("✅ Authentification Hugging Face réussie !")
-            logger.info(f"🔐 Token configuré et vérifié (longueur: {len(HF_TOKEN)})")
-            AUTH_SUCCESS = True
+        # Vérification selon la version disponible
+        if HAS_HFFOLDER:
+            saved_token = HfFolder.get_token()
+            if saved_token:
+                logger.info("✅ Authentification Hugging Face réussie !")
+                logger.info(f"🔐 Token configuré et vérifié (longueur: {len(HF_TOKEN)})")
+                AUTH_SUCCESS = True
+            else:
+                logger.error("❌ Token non enregistré malgré login()")
         else:
-            logger.error("❌ Token non enregistré malgré login()")
+            # Pour les nouvelles versions, on fait confiance à login()
+            logger.info("✅ Authentification Hugging Face réussie !")
+            logger.info(f"🔐 Token configuré (longueur: {len(HF_TOKEN)})")
+            AUTH_SUCCESS = True
             
     except Exception as e:
         logger.error(f"❌ Échec de l'authentification HF : {e}")
