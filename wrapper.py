@@ -21,7 +21,7 @@ SPACE_URL = "dofbi/galsenai-xtts-v2-wolof-inference"
 
 # Définir le token HF comme variable d'environnement
 # Gradio Client le lira automatiquement
-HF_TOKEN = "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"
+HF_TOKEN = "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"
 if HF_TOKEN and not os.environ.get("HF_TOKEN"):
     os.environ["HF_TOKEN"] = HF_TOKEN
 
